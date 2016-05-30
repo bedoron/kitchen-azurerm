@@ -35,6 +35,14 @@ module Kitchen
         'vm'
       end
 
+      default_config(:nic_name) do |_config|
+        'nic'
+      end
+      
+      default_config(:publicip_name) do |_config|
+        'publicip'
+      end      
+      
       default_config(:storage_account_type) do |_config|
         'Standard_LRS'
       end
@@ -68,8 +76,15 @@ module Kitchen
           imageOffer: image_offer,
           imageSku: image_sku,
           imageVersion: image_version,
-          vmName: state[:vm_name]
+          vmName: state[:vm_name],
+          publicipName: config[:publicip_name],
+          nicName: config[:nic_name]
         }
+        
+        
+        puts config
+        puts "================"
+        puts state
 
         credentials = Kitchen::Driver::Credentials.new.azure_credentials_for_subscription(config[:subscription_id])
         @resource_management_client = ::Azure::ARM::Resources::ResourceManagementClient.new(credentials)
@@ -185,6 +200,9 @@ module Kitchen
 
       def deployment(parameters)
         template = template_for_transport_name
+        puts "TEMPLATE FOR TRANSPORT NAME"
+        puts template
+        puts "********************************"
         deployment = ::Azure::ARM::Resources::Models::Deployment.new
         deployment.properties = ::Azure::ARM::Resources::Models::DeploymentProperties.new
         deployment.properties.mode = Azure::ARM::Resources::Models::DeploymentMode::Incremental
@@ -391,6 +409,20 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
                 "description": "The vm name created inside of the resource group."
             }
         },
+        "myNicName": {
+            "type": "string",
+            "defaultValue": "nic",
+            "metadata": {
+                "description": "The vm name created inside of the resource group."
+            }
+        },
+        "publicipName": {
+            "type": "string",
+            "defaultValue": "publicip",
+            "metadata": {
+                "description": "The vm name created inside of the resource group."
+            }
+        },
         "storageAccountType": {
             "type": "string",
             "defaultValue": "Standard_LRS",
@@ -409,12 +441,12 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
     "variables": {
         "location": "[parameters('location')]",
         "OSDiskName": "osdisk",
-        "nicName": "nic",
+        "nicName": "parameters('myNicName')",
         "addressPrefix": "10.0.0.0/16",
         "subnetName": "Subnet",
         "subnetPrefix": "10.0.0.0/24",
         "storageAccountType": "[parameters('storageAccountType')]",
-        "publicIPAddressName": "publicip",
+        "publicIPAddressName": "parameters('publicipName')",
         "publicIPAddressType": "Dynamic",
         "vmStorageAccountContainerName": "vhds",
         "vmName": "[parameters('vmName')]",
