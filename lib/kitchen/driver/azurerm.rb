@@ -38,11 +38,11 @@ module Kitchen
       default_config(:nic_name) do |_config|
         'nic'
       end
-      
+
       default_config(:publicip_name) do |_config|
         'publicip'
-      end      
-      
+      end
+
       default_config(:storage_account_type) do |_config|
         'Standard_LRS'
       end
@@ -64,24 +64,24 @@ module Kitchen
 
         image_publisher, image_offer, image_sku, image_version = config[:image_urn].split(':', 4)
         deployment_parameters = {
-          location: config[:location],
-          vmSize: config[:machine_size],
-          storageAccountType: config[:storage_account_type],
-          bootDiagnosticsEnabled: config[:boot_diagnostics_enabled],
-          newStorageAccountName: "storage#{state[:uuid]}",
-          adminUsername: state[:username],
-          adminPassword: state[:password],
-          dnsNameForPublicIP: "kitchen-#{state[:uuid]}",
-          imagePublisher: image_publisher,
-          imageOffer: image_offer,
-          imageSku: image_sku,
-          imageVersion: image_version,
-          vmName: state[:vm_name],
-          publicipName: config[:publicip_name],
-          nicName: config[:nic_name]
+            location: config[:location],
+            vmSize: config[:machine_size],
+            storageAccountType: config[:storage_account_type],
+            bootDiagnosticsEnabled: config[:boot_diagnostics_enabled],
+            newStorageAccountName: "storage#{state[:uuid]}",
+            adminUsername: state[:username],
+            adminPassword: state[:password],
+            dnsNameForPublicIP: "kitchen-#{state[:uuid]}",
+            imagePublisher: image_publisher,
+            imageOffer: image_offer,
+            imageSku: image_sku,
+            imageVersion: image_version,
+            vmName: state[:vm_name],
+            publicipName: config[:publicip_name],
+            nicName: config[:nic_name]
         }
-        
-        
+
+
         puts config
         puts "================"
         puts state
@@ -129,7 +129,8 @@ module Kitchen
         # Now retrieve the public IP from the resource group:
         network_management_client = ::Azure::ARM::Network::NetworkResourceProviderClient.new(credentials)
         network_management_client.subscription_id = config[:subscription_id]
-        result = network_management_client.public_ip_addresses.get(state[:azure_resource_group_name], 'publicip').value!
+        puts "Trying to fetch ip for #{config[:publicip_name]}"
+        result = network_management_client.public_ip_addresses.get(state[:azure_resource_group_name], config[:publicip_name]).value!
         info "IP Address is: #{result.body.properties.ip_address} [#{result.body.properties.dns_settings.fqdn}]"
         state[:hostname] = result.body.properties.ip_address
       end
@@ -150,8 +151,9 @@ module Kitchen
       end
 
       def azure_resource_group_name
-        formatted_time = Time.now.utc.strftime '%Y%m%dT%H%M%S'
-        "#{config[:azure_resource_group_name]}-#{formatted_time}"
+        #formatted_time = Time.now.utc.strftime '%Y%m%dT%H%M%S'
+        #"#{config[:azure_resource_group_name]}-#{formatted_time}"
+        "#{config[:azure_resource_group_name]}"
       end
 
       def template_for_transport_name
@@ -200,14 +202,21 @@ module Kitchen
 
       def deployment(parameters)
         template = template_for_transport_name
-        puts "TEMPLATE FOR TRANSPORT NAME"
-        puts template
-        puts "********************************"
         deployment = ::Azure::ARM::Resources::Models::Deployment.new
         deployment.properties = ::Azure::ARM::Resources::Models::DeploymentProperties.new
         deployment.properties.mode = Azure::ARM::Resources::Models::DeploymentMode::Incremental
         deployment.properties.template = JSON.parse(template)
+
+        puts "TEMPLATE FOR TRANSPORT NAME 1"
+        puts deployment.properties.template
+        puts "********************************"
+
         deployment.properties.parameters = parameters_in_values_format(parameters)
+
+        puts "PARAMETERZ"
+        puts deployment.properties.parameters
+        puts "********************************"
+
         debug(deployment.properties.template)
         deployment
       end
@@ -409,7 +418,7 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
                 "description": "The vm name created inside of the resource group."
             }
         },
-        "myNicName": {
+        "nicName": {
             "type": "string",
             "defaultValue": "nic",
             "metadata": {
@@ -441,12 +450,12 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
     "variables": {
         "location": "[parameters('location')]",
         "OSDiskName": "osdisk",
-        "nicName": "parameters('myNicName')",
+        "nicName": "[parameters('nicName')]",
         "addressPrefix": "10.0.0.0/16",
         "subnetName": "Subnet",
         "subnetPrefix": "10.0.0.0/24",
         "storageAccountType": "[parameters('storageAccountType')]",
-        "publicIPAddressName": "parameters('publicipName')",
+        "publicIPAddressName": "[parameters('publicipName')]",
         "publicIPAddressType": "Dynamic",
         "vmStorageAccountContainerName": "vhds",
         "vmName": "[parameters('vmName')]",
