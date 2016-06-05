@@ -38,11 +38,11 @@ module Kitchen
       default_config(:nic_name) do |_config|
         'nic'
       end
-
+      
       default_config(:publicip_name) do |_config|
         'publicip'
-      end
-
+      end      
+      
       default_config(:storage_account_type) do |_config|
         'Standard_LRS'
       end
@@ -58,33 +58,33 @@ module Kitchen
       default_config(:azure_management_url) do |_config|
         'https://management.azure.com'
       end
+      
+      default_config(:private_ip_address) do |_config|
+        '10.0.0.1'
+      end
 
       def create(state)
         state = validate_state(state)
 
         image_publisher, image_offer, image_sku, image_version = config[:image_urn].split(':', 4)
         deployment_parameters = {
-            location: config[:location],
-            vmSize: config[:machine_size],
-            storageAccountType: config[:storage_account_type],
-            bootDiagnosticsEnabled: config[:boot_diagnostics_enabled],
-            newStorageAccountName: "storage#{state[:uuid]}",
-            adminUsername: state[:username],
-            adminPassword: state[:password],
-            dnsNameForPublicIP: "kitchen-#{state[:uuid]}",
-            imagePublisher: image_publisher,
-            imageOffer: image_offer,
-            imageSku: image_sku,
-            imageVersion: image_version,
-            vmName: state[:vm_name],
-            publicipName: config[:publicip_name],
-            nicName: config[:nic_name]
+          location: config[:location],
+          vmSize: config[:machine_size],
+          storageAccountType: config[:storage_account_type],
+          bootDiagnosticsEnabled: config[:boot_diagnostics_enabled],
+          newStorageAccountName: "storage#{state[:uuid]}",
+          adminUsername: state[:username],
+          adminPassword: state[:password],
+          dnsNameForPublicIP: "kitchen-#{state[:uuid]}",
+          imagePublisher: image_publisher,
+          imageOffer: image_offer,
+          imageSku: image_sku,
+          imageVersion: image_version,
+          vmName: state[:vm_name],
+          publicipName: config[:publicip_name],
+          nicName: config[:nic_name],
+          privateIPAddress: config[:private_ip_address]
         }
-
-
-        puts config
-        puts "================"
-        puts state
 
         credentials = Kitchen::Driver::Credentials.new.azure_credentials_for_subscription(config[:subscription_id])
         @resource_management_client = ::Azure::ARM::Resources::ResourceManagementClient.new(credentials)
@@ -206,17 +206,17 @@ module Kitchen
         deployment.properties = ::Azure::ARM::Resources::Models::DeploymentProperties.new
         deployment.properties.mode = Azure::ARM::Resources::Models::DeploymentMode::Incremental
         deployment.properties.template = JSON.parse(template)
-
-        puts "TEMPLATE FOR TRANSPORT NAME 1"
+        
+        puts "TEMPLATE FOR TRANSPORT NAME 1" 
         puts deployment.properties.template
         puts "********************************"
-
+        
         deployment.properties.parameters = parameters_in_values_format(parameters)
-
-        puts "PARAMETERZ"
+        
+        puts "PARAMETERZ" 
         puts deployment.properties.parameters
         puts "********************************"
-
+        
         debug(deployment.properties.template)
         deployment
       end
@@ -422,14 +422,21 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
             "type": "string",
             "defaultValue": "nic",
             "metadata": {
-                "description": "The vm name created inside of the resource group."
+                "description": "The NIC name created inside of the resource group. Useful when setting up several VMs inside one RG"
             }
+        },
+        "privateIPAddress": {
+            "type": "string",
+            "defaultValue": null,
+            "metadata": {
+                "description": "Private IP address for the VM which this template is associated to."
+            }        
         },
         "publicipName": {
             "type": "string",
             "defaultValue": "publicip",
             "metadata": {
-                "description": "The vm name created inside of the resource group."
+                "description": "The public ip resource name."
             }
         },
         "storageAccountType": {
@@ -451,6 +458,7 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
         "location": "[parameters('location')]",
         "OSDiskName": "osdisk",
         "nicName": "[parameters('nicName')]",
+        "privateIPAddress": "[parameters('privateIPAddress')]",
         "addressPrefix": "10.0.0.0/16",
         "subnetName": "Subnet",
         "subnetPrefix": "10.0.0.0/24",
@@ -521,6 +529,7 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
                     {
                         "name": "ipconfig1",
                         "properties": {
+                            "privateIPAddress": "variables('privateIPAddress')",
                             "privateIPAllocationMethod": "Dynamic",
                             "publicIPAddress": {
                                 "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('publicIPAddressName'))]"
