@@ -529,7 +529,7 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
                     {
                         "name": "ipconfig1",
                         "properties": {
-                            "privateIPAddress": "variables('privateIPAddress')",
+                            "privateIPAddress": "[variables('privateIPAddress')]",
                             "privateIPAllocationMethod": "Dynamic",
                             "publicIPAddress": {
                                 "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('publicIPAddressName'))]"
