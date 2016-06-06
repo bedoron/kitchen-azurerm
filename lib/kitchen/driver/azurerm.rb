@@ -62,6 +62,10 @@ module Kitchen
       default_config(:private_ip_address) do |_config|
         '10.0.0.1'
       end
+      
+      default_config(:dns_name_for_public_ip) do |_config|
+        nil
+      end
 
       def create(state)
         state = validate_state(state)
@@ -75,7 +79,7 @@ module Kitchen
           newStorageAccountName: "storage#{state[:uuid]}",
           adminUsername: state[:username],
           adminPassword: state[:password],
-          dnsNameForPublicIP: "kitchen-#{state[:uuid]}",
+          dnsNameForPublicIP: if config.key?(:dns_name_for_public_ip) then config[:dns_name_for_public_ip] else "kitchen-#{state[:uuid]}" end,
           imagePublisher: image_publisher,
           imageOffer: image_offer,
           imageSku: image_sku,
@@ -483,7 +487,7 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
             }
         },
         {
-            "apiVersion": "2015-05-01-preview",
+            "apiVersion": "2015-06-15",
             "type": "Microsoft.Network/publicIPAddresses",
             "name": "[variables('publicIPAddressName')]",
             "location": "[variables('location')]",
@@ -516,7 +520,7 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
             }
         },
         {
-            "apiVersion": "2015-05-01-preview",
+            "apiVersion": "2015-06-15",
             "type": "Microsoft.Network/networkInterfaces",
             "name": "[variables('nicName')]",
             "location": "[variables('location')]",
@@ -529,7 +533,6 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
                     {
                         "name": "ipconfig1",
                         "properties": {
-                            "privateIPAddress": "[variables('privateIPAddress')]",
                             "privateIPAllocationMethod": "Dynamic",
                             "publicIPAddress": {
                                 "id": "[resourceId('Microsoft.Network/publicIPAddresses',variables('publicIPAddressName'))]"
