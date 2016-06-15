@@ -152,8 +152,8 @@ module Kitchen
         # Now retrieve the public IP from the resource group:
         network_management_client = ::Azure::ARM::Network::NetworkResourceProviderClient.new(credentials)
         network_management_client.subscription_id = config[:subscription_id]
-        puts "Trying to fetch ip for #{config[:publicip_name]}"
-        result = network_management_client.public_ip_addresses.get(state[:azure_resource_group_name], config[:publicip_name]).value!
+        puts "Trying to fetch ip for #{config[:vm_name]}-#{config[:publicip_name]}"
+        result = network_management_client.public_ip_addresses.get(state[:azure_resource_group_name], "#{config[:vm_name]}-#{config[:publicip_name]}").value!
         info "IP Address is: #{result.body.properties.ip_address} [#{result.body.properties.dns_settings.fqdn}]"
         state[:hostname] = result.body.properties.ip_address
       end
