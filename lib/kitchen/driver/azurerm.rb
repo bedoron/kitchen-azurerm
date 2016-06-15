@@ -63,21 +63,39 @@ module Kitchen
         '10.0.0.1'
       end
       
+      default_config(:firewall_inbound) do |_config|
+        []
+      end
+      
       default_config(:dns_name_for_public_ip) do |_config|
         nil
       end
 
+      def create_firewall_inbound_rules()
+        rule_priority = 100
+        config[:firewall_inbound].map do |port_number| 
+            rule_priority = rule_priority + 10
+            { name: "PORT_#{port_number}", properties: { protocol: "*",  sourcePortRange: "*", destinationPortRange: "#{port_number}", sourceAddressPrefix: "*", destinationAddressPrefix: "*", access: "Allow", direction: "Inbound", priority:  rule_priority} }
+        end
+      end
+      
       def create(state)
         state = validate_state(state)
 
         image_publisher, image_offer, image_sku, image_version = config[:image_urn].split(':', 4)
+        
+        puts config[:firewall_inbound]
+        
+        firewall_rules = create_firewall_inbound_rules()
+        puts firewall_rules
+        
         deployment_parameters = {
           location: config[:location],
           vmSize: config[:machine_size],
           storageAccountType: config[:storage_account_type],
           bootDiagnosticsEnabled: config[:boot_diagnostics_enabled],
           newStorageAccountName: "storage#{state[:uuid]}",
-          adminUsername: state[:username],
+          adminUsername: if config.key?(:username) then config[:username] else state[:username] end,
           adminPassword: state[:password],
           dnsNameForPublicIP: if config.key?(:dns_name_for_public_ip) then config[:dns_name_for_public_ip] else "kitchen-#{state[:uuid]}" end,
           imagePublisher: image_publisher,
@@ -87,7 +105,8 @@ module Kitchen
           vmName: state[:vm_name],
           publicipName: config[:publicip_name],
           nicName: config[:nic_name],
-          privateIPAddress: config[:private_ip_address]
+          privateIPAddress: config[:private_ip_address],
+          firewallInbound: firewall_rules
         }
 
         credentials = Kitchen::Driver::Credentials.new.azure_credentials_for_subscription(config[:subscription_id])
@@ -211,15 +230,15 @@ module Kitchen
         deployment.properties.mode = Azure::ARM::Resources::Models::DeploymentMode::Incremental
         deployment.properties.template = JSON.parse(template)
         
-        puts "TEMPLATE FOR TRANSPORT NAME 1" 
-        puts deployment.properties.template
-        puts "********************************"
+        info "TEMPLATE FOR TRANSPORT NAME 1"
+        info deployment.properties.template
+        info "********************************"
         
         deployment.properties.parameters = parameters_in_values_format(parameters)
         
-        puts "PARAMETERZ" 
-        puts deployment.properties.parameters
-        puts "********************************"
+        info "PARAMETERZ" 
+        info deployment.properties.parameters
+        info "********************************"
         
         debug(deployment.properties.template)
         deployment
@@ -456,18 +475,23 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
             "metadata": {
                 "description": "Whether to enable (true) or disable (false) boot diagnostics. Default: true (requires Standard storage)."
             }
+        },
+        "firewallInbound": {
+            "type": "array",
+            "defaultValue": []
         }
     },
     "variables": {
         "location": "[parameters('location')]",
         "OSDiskName": "osdisk",
-        "nicName": "[parameters('nicName')]",
+        "nicName": "[concat(parameters('vmName'), '-nic')]",
+        "firewallName": "[concat(parameters('vmName'), '-firewall')]",
         "privateIPAddress": "[parameters('privateIPAddress')]",
         "addressPrefix": "10.0.0.0/16",
         "subnetName": "Subnet",
         "subnetPrefix": "10.0.0.0/24",
         "storageAccountType": "[parameters('storageAccountType')]",
-        "publicIPAddressName": "[parameters('publicipName')]",
+        "publicIPAddressName": "[concat(parameters('vmName'), '-publicip')]",
         "publicIPAddressType": "Dynamic",
         "vmStorageAccountContainerName": "vhds",
         "vmName": "[parameters('vmName')]",
@@ -485,6 +509,16 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
             "properties": {
                 "accountType": "[variables('storageAccountType')]"
             }
+        },
+        {
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[variables('firewallName')]",
+            "apiVersion": "2016-03-30",
+            "location": "[variables('location')]",
+            "properties": {
+                "securityRules": "[parameters('firewallInbound')]"
+            },
+            "dependsOn": []
         },
         {
             "apiVersion": "2015-06-15",
@@ -525,8 +559,9 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
             "name": "[variables('nicName')]",
             "location": "[variables('location')]",
             "dependsOn": [
-                "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]",
-                "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+                "[resourceId('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]",
+                "[resourceId('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups/',variables('firewallName'))]"
             ],
             "properties": {
                 "ipConfigurations": [
@@ -542,7 +577,10 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
                             }
                         }
                     }
-                ]
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('firewallName'))]"
+                }
             }
         },
         {
