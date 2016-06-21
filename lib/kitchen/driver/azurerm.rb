@@ -35,14 +35,6 @@ module Kitchen
         'vm'
       end
 
-      default_config(:nic_name) do |_config|
-        'nic'
-      end
-      
-      default_config(:publicip_name) do |_config|
-        'publicip'
-      end      
-      
       default_config(:storage_account_type) do |_config|
         'Standard_LRS'
       end
@@ -80,31 +72,24 @@ module Kitchen
       end
       
       def create(state)
-        state = validate_state(state)
-
+        state = extract_state(state)
         image_publisher, image_offer, image_sku, image_version = config[:image_urn].split(':', 4)
-        
-        puts config[:firewall_inbound]
-        
         firewall_rules = create_firewall_inbound_rules()
-        puts firewall_rules
-        
+
         deployment_parameters = {
           location: config[:location],
           vmSize: config[:machine_size],
           storageAccountType: config[:storage_account_type],
           bootDiagnosticsEnabled: config[:boot_diagnostics_enabled],
           newStorageAccountName: "storage#{state[:uuid]}",
-          adminUsername: if config.key?(:username) then config[:username] else state[:username] end,
+          adminUsername: state[:username],
           adminPassword: state[:password],
-          dnsNameForPublicIP: if config.key?(:dns_name_for_public_ip) then config[:dns_name_for_public_ip] else "kitchen-#{state[:uuid]}" end,
+          dnsNameForPublicIP: state[:dns_name_for_public_ip],
           imagePublisher: image_publisher,
           imageOffer: image_offer,
           imageSku: image_sku,
           imageVersion: image_version,
           vmName: state[:vm_name],
-          publicipName: config[:publicip_name],
-          nicName: config[:nic_name],
           privateIPAddress: config[:private_ip_address],
           firewallInbound: firewall_rules
         }
@@ -152,31 +137,28 @@ module Kitchen
         # Now retrieve the public IP from the resource group:
         network_management_client = ::Azure::ARM::Network::NetworkResourceProviderClient.new(credentials)
         network_management_client.subscription_id = config[:subscription_id]
-        puts "Trying to fetch ip for #{config[:vm_name]}-#{config[:publicip_name]}"
-        result = network_management_client.public_ip_addresses.get(state[:azure_resource_group_name], "#{config[:vm_name]}-#{config[:publicip_name]}").value!
+        puts "Trying to fetch ip for #{state[:vm_name]}-publicip"
+        result = network_management_client.public_ip_addresses.get(state[:azure_resource_group_name], "#{state[:vm_name]}-publicip").value!
         info "IP Address is: #{result.body.properties.ip_address} [#{result.body.properties.dns_settings.fqdn}]"
         state[:hostname] = result.body.properties.ip_address
       end
 
-      def existing_state_value?(state, property)
+      def existing_key_value?(state, property)
         state.key?(property) && !state[property].nil?
       end
 
-      def validate_state(state = {})
-        state[:uuid] = SecureRandom.hex(8) unless existing_state_value?(state, :uuid)
-        state[:server_id] = "vm#{state[:uuid]}" unless existing_state_value?(state, :server_id)
-        state[:azure_resource_group_name] = azure_resource_group_name unless existing_state_value?(state, :azure_resource_group_name)
-        [:subscription_id, :username, :password, :vm_name, :azure_management_url].each do |config_element|
-          state[config_element] = config[config_element] unless existing_state_value?(state, config_element)
+      def extract_state(state = {})
+        state[:uuid] = SecureRandom.hex(8) unless existing_key_value?(state, :uuid)
+        state[:azure_resource_group_name] = config[:azure_resource_group_name] unless existing_key_value?(state, :azure_resource_group_name)
+
+        dns_name_for_public_ip = if existing_key_value?(config, :dns_name_for_public_ip) then config[:dns_name_for_public_ip] else "kitchen-#{state[:uuid]}" end
+        state[:dns_name_for_public_ip] = dns_name_for_public_ip unless existing_key_value?(state, :dns_name_for_public_ip)
+
+        [:subscription_id, :username, :password, :vm_name, :azure_management_url, :azure_resource_group_name, :dns_name_for_public_ip, :publicip_name].each do |config_element|
+          state[config_element] = config[config_element] unless existing_key_value?(state, config_element)
         end
 
         state
-      end
-
-      def azure_resource_group_name
-        #formatted_time = Time.now.utc.strftime '%Y%m%dT%H%M%S'
-        #"#{config[:azure_resource_group_name]}-#{formatted_time}"
-        "#{config[:azure_resource_group_name]}"
       end
 
       def template_for_transport_name
@@ -292,22 +274,25 @@ module Kitchen
       end
 
       def destroy(state)
-        return if state[:server_id].nil?
+        return if state[:vm_name].nil?
         credentials = Kitchen::Driver::Credentials.new.azure_credentials_for_subscription(state[:subscription_id])
         resource_management_client = ::Azure::ARM::Resources::ResourceManagementClient.new(credentials, state[:azure_management_url])
         resource_management_client.subscription_id = state[:subscription_id]
         begin
           info "Destroying Resource Group: #{state[:azure_resource_group_name]}"
-          resource_management_client.resource_groups.begin_delete(state[:azure_resource_group_name]).value!
+
+          resource_management_client.resources
+
+          #resource_management_client.resource_groups.begin_delete(state[:azure_resource_group_name]).value!
           info 'Destroy operation accepted and will continue in the background.'
         rescue ::MsRestAzure::AzureOperationError => operation_error
           info operation_error.body['error']
           raise operation_error
         end
-        state.delete(:server_id)
-        state.delete(:hostname)
-        state.delete(:username)
-        state.delete(:password)
+        #state.delete(:server_id)
+        #state.delete(:hostname)
+        #state.delete(:username)
+        #state.delete(:password)
       end
 
       def enable_winrm_powershell_script
@@ -454,13 +439,6 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
             "metadata": {
                 "description": "Private IP address for the VM which this template is associated to."
             }        
-        },
-        "publicipName": {
-            "type": "string",
-            "defaultValue": "publicip",
-            "metadata": {
-                "description": "The public ip resource name."
-            }
         },
         "storageAccountType": {
             "type": "string",
