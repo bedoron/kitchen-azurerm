@@ -50,11 +50,32 @@ module Kitchen
       default_config(:azure_management_url) do |_config|
         'https://management.azure.com'
       end
+      
+      default_config(:private_ip_address) do |_config|
+        '10.0.0.1'
+      end
+      
+      default_config(:firewall_inbound) do |_config|
+        []
+      end
+      
+      default_config(:dns_name_for_public_ip) do |_config|
+        nil
+      end
 
+      def create_firewall_inbound_rules()
+        rule_priority = 100
+        config[:firewall_inbound].map do |port_number| 
+            rule_priority = rule_priority + 10
+            { name: "PORT_#{port_number}", properties: { protocol: "*",  sourcePortRange: "*", destinationPortRange: "#{port_number}", sourceAddressPrefix: "*", destinationAddressPrefix: "*", access: "Allow", direction: "Inbound", priority:  rule_priority} }
+        end
+      end
+      
       def create(state)
-        state = validate_state(state)
-
+        state = extract_state(state)
         image_publisher, image_offer, image_sku, image_version = config[:image_urn].split(':', 4)
+        firewall_rules = create_firewall_inbound_rules()
+
         deployment_parameters = {
           location: config[:location],
           vmSize: config[:machine_size],
@@ -63,12 +84,14 @@ module Kitchen
           newStorageAccountName: "storage#{state[:uuid]}",
           adminUsername: state[:username],
           adminPassword: state[:password],
-          dnsNameForPublicIP: "kitchen-#{state[:uuid]}",
+          dnsNameForPublicIP: state[:dns_name_for_public_ip],
           imagePublisher: image_publisher,
           imageOffer: image_offer,
           imageSku: image_sku,
           imageVersion: image_version,
-          vmName: state[:vm_name]
+          vmName: state[:vm_name],
+          privateIPAddress: config[:private_ip_address],
+          firewallInbound: firewall_rules
         }
 
         credentials = Kitchen::Driver::Credentials.new.azure_credentials_for_subscription(config[:subscription_id])
@@ -114,29 +137,28 @@ module Kitchen
         # Now retrieve the public IP from the resource group:
         network_management_client = ::Azure::ARM::Network::NetworkResourceProviderClient.new(credentials)
         network_management_client.subscription_id = config[:subscription_id]
-        result = network_management_client.public_ip_addresses.get(state[:azure_resource_group_name], 'publicip').value!
+        puts "Trying to fetch ip for #{state[:vm_name]}-publicip"
+        result = network_management_client.public_ip_addresses.get(state[:azure_resource_group_name], "#{state[:vm_name]}-publicip").value!
         info "IP Address is: #{result.body.properties.ip_address} [#{result.body.properties.dns_settings.fqdn}]"
         state[:hostname] = result.body.properties.ip_address
       end
 
-      def existing_state_value?(state, property)
+      def existing_key_value?(state, property)
         state.key?(property) && !state[property].nil?
       end
 
-      def validate_state(state = {})
-        state[:uuid] = SecureRandom.hex(8) unless existing_state_value?(state, :uuid)
-        state[:server_id] = "vm#{state[:uuid]}" unless existing_state_value?(state, :server_id)
-        state[:azure_resource_group_name] = azure_resource_group_name unless existing_state_value?(state, :azure_resource_group_name)
-        [:subscription_id, :username, :password, :vm_name, :azure_management_url].each do |config_element|
-          state[config_element] = config[config_element] unless existing_state_value?(state, config_element)
+      def extract_state(state = {})
+        state[:uuid] = SecureRandom.hex(8) unless existing_key_value?(state, :uuid)
+        state[:azure_resource_group_name] = config[:azure_resource_group_name] unless existing_key_value?(state, :azure_resource_group_name)
+
+        dns_name_for_public_ip = if existing_key_value?(config, :dns_name_for_public_ip) then config[:dns_name_for_public_ip] else "kitchen-#{state[:uuid]}" end
+        state[:dns_name_for_public_ip] = dns_name_for_public_ip unless existing_key_value?(state, :dns_name_for_public_ip)
+
+        [:subscription_id, :username, :password, :vm_name, :azure_management_url, :azure_resource_group_name, :dns_name_for_public_ip, :publicip_name].each do |config_element|
+          state[config_element] = config[config_element] unless existing_key_value?(state, config_element)
         end
 
         state
-      end
-
-      def azure_resource_group_name
-        formatted_time = Time.now.utc.strftime '%Y%m%dT%H%M%S'
-        "#{config[:azure_resource_group_name]}-#{formatted_time}"
       end
 
       def template_for_transport_name
@@ -189,7 +211,17 @@ module Kitchen
         deployment.properties = ::Azure::ARM::Resources::Models::DeploymentProperties.new
         deployment.properties.mode = Azure::ARM::Resources::Models::DeploymentMode::Incremental
         deployment.properties.template = JSON.parse(template)
+        
+        info "TEMPLATE FOR TRANSPORT NAME 1"
+        info deployment.properties.template
+        info "********************************"
+        
         deployment.properties.parameters = parameters_in_values_format(parameters)
+        
+        info "PARAMETERZ" 
+        info deployment.properties.parameters
+        info "********************************"
+        
         debug(deployment.properties.template)
         deployment
       end
@@ -242,22 +274,25 @@ module Kitchen
       end
 
       def destroy(state)
-        return if state[:server_id].nil?
+        return if state[:vm_name].nil?
         credentials = Kitchen::Driver::Credentials.new.azure_credentials_for_subscription(state[:subscription_id])
         resource_management_client = ::Azure::ARM::Resources::ResourceManagementClient.new(credentials, state[:azure_management_url])
         resource_management_client.subscription_id = state[:subscription_id]
         begin
           info "Destroying Resource Group: #{state[:azure_resource_group_name]}"
-          resource_management_client.resource_groups.begin_delete(state[:azure_resource_group_name]).value!
+
+          resource_management_client.resources
+
+          #resource_management_client.resource_groups.begin_delete(state[:azure_resource_group_name]).value!
           info 'Destroy operation accepted and will continue in the background.'
         rescue ::MsRestAzure::AzureOperationError => operation_error
           info operation_error.body['error']
           raise operation_error
         end
-        state.delete(:server_id)
-        state.delete(:hostname)
-        state.delete(:username)
-        state.delete(:password)
+        #state.delete(:server_id)
+        #state.delete(:hostname)
+        #state.delete(:username)
+        #state.delete(:password)
       end
 
       def enable_winrm_powershell_script
@@ -391,6 +426,20 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
                 "description": "The vm name created inside of the resource group."
             }
         },
+        "nicName": {
+            "type": "string",
+            "defaultValue": "nic",
+            "metadata": {
+                "description": "The NIC name created inside of the resource group. Useful when setting up several VMs inside one RG"
+            }
+        },
+        "privateIPAddress": {
+            "type": "string",
+            "defaultValue": null,
+            "metadata": {
+                "description": "Private IP address for the VM which this template is associated to."
+            }        
+        },
         "storageAccountType": {
             "type": "string",
             "defaultValue": "Standard_LRS",
@@ -404,17 +453,23 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
             "metadata": {
                 "description": "Whether to enable (true) or disable (false) boot diagnostics. Default: true (requires Standard storage)."
             }
+        },
+        "firewallInbound": {
+            "type": "array",
+            "defaultValue": []
         }
     },
     "variables": {
         "location": "[parameters('location')]",
         "OSDiskName": "osdisk",
-        "nicName": "nic",
+        "nicName": "[concat(parameters('vmName'), '-nic')]",
+        "firewallName": "[concat(parameters('vmName'), '-firewall')]",
+        "privateIPAddress": "[parameters('privateIPAddress')]",
         "addressPrefix": "10.0.0.0/16",
         "subnetName": "Subnet",
         "subnetPrefix": "10.0.0.0/24",
         "storageAccountType": "[parameters('storageAccountType')]",
-        "publicIPAddressName": "publicip",
+        "publicIPAddressName": "[concat(parameters('vmName'), '-publicip')]",
         "publicIPAddressType": "Dynamic",
         "vmStorageAccountContainerName": "vhds",
         "vmName": "[parameters('vmName')]",
@@ -434,7 +489,17 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
             }
         },
         {
-            "apiVersion": "2015-05-01-preview",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[variables('firewallName')]",
+            "apiVersion": "2016-03-30",
+            "location": "[variables('location')]",
+            "properties": {
+                "securityRules": "[parameters('firewallInbound')]"
+            },
+            "dependsOn": []
+        },
+        {
+            "apiVersion": "2015-06-15",
             "type": "Microsoft.Network/publicIPAddresses",
             "name": "[variables('publicIPAddressName')]",
             "location": "[variables('location')]",
@@ -467,13 +532,14 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
             }
         },
         {
-            "apiVersion": "2015-05-01-preview",
+            "apiVersion": "2015-06-15",
             "type": "Microsoft.Network/networkInterfaces",
             "name": "[variables('nicName')]",
             "location": "[variables('location')]",
             "dependsOn": [
-                "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]",
-                "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+                "[resourceId('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]",
+                "[resourceId('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups/',variables('firewallName'))]"
             ],
             "properties": {
                 "ipConfigurations": [
@@ -489,7 +555,10 @@ New-NetFirewallRule -DisplayName "Windows Remote Management (HTTP-In)" -Name "Wi
                             }
                         }
                     }
-                ]
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('firewallName'))]"
+                }
             }
         },
         {
