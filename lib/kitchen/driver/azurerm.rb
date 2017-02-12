@@ -64,13 +64,37 @@ module Kitchen
       end
 
       def create_firewall_inbound_rules()
-        rule_priority = 100
-        config[:firewall_inbound].map do |port_number| 
-            rule_priority = rule_priority + 10
-            { name: "PORT_#{port_number}", properties: { protocol: "*",  sourcePortRange: "*", destinationPortRange: "#{port_number}", sourceAddressPrefix: "*", destinationAddressPrefix: "*", access: "Allow", direction: "Inbound", priority:  rule_priority} }
+        if existing_key_value?(config, :trusted_nets) then
+          info 'Using list of provided list of trusted nets'
+          trusted_nets = config[:trusted_nets]
+        else
+          info 'No trusted nets found. Use all nets mask \'*\''
+          trusted_nets = {:ALL_NETS => '*'}
         end
+
+        rule_priority = 100
+        trusted_nets_rules = []
+        trusted_nets.each do |trusted_net_name, trusted_net_address|
+          net_rules = config[:firewall_inbound].map do |port_number|
+            rule_priority = rule_priority + 10
+            { name: "#{trusted_net_name}_PORT_#{port_number}",
+              properties: {
+                  protocol: "*",
+                  sourcePortRange: "*",
+                  destinationPortRange: "#{port_number}",
+                  sourceAddressPrefix: "#{trusted_net_address}",
+                  destinationAddressPrefix: "*",
+                  access: "Allow",
+                  direction: "Inbound",
+                  priority:  rule_priority
+              }
+            }
+          end
+          trusted_nets_rules.push(*net_rules)
+        end
+        trusted_nets_rules
       end
-      
+
       def create(state)
         state = extract_state(state)
         image_publisher, image_offer, image_sku, image_version = config[:image_urn].split(':', 4)
